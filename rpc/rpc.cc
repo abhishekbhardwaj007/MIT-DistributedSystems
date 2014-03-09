@@ -660,10 +660,71 @@ rpcs::rpcstate_t
 rpcs::checkduplicate_and_update(unsigned int clt_nonce, unsigned int xid,
 		unsigned int xid_rep, char **b, int *sz)
 {
-	ScopedLock rwl(&reply_window_m_);
+	rpcstate_t result = NEW;
 
-        // You fill this in for Lab 1.
-	return NEW;
+	ScopedLock rwl(&reply_window_m_);
+  
+	// See if client entry resides in map
+    if (reply_window_.count(clt_nonce) > 0)
+    {
+		bool found = false;
+     
+        std::list<reply_t>::iterator it;
+		
+		std::list<reply_t> client_list = reply_window_.find(clt_nonce)->second;
+
+		// See if xid is present in the list
+        for (it = client_list.begin(); it != client_list.end(); it++)
+		{
+			if (it->xid == xid) 
+			{ 
+				found = true;
+                result = it->cb_present == true ? DONE : INPROGRESS;
+				break;
+			}
+		}
+
+		// If not found in list and xid is less than
+		// oldest xid in the window then this packet is forgotten
+		if ((!found) && (client_list.begin()->xid > xid))
+		{
+			result = FORGOTTEN;
+		}
+		else if (!found)
+		{
+		    // Else Add reply to end of the list	
+			reply_t reply_pkt(xid);
+			client_list.push_back(reply_pkt);
+			result = NEW;
+		}
+		
+		// Delete all elements in list with xid <= xid_rep
+        for (it = client_list.begin(); it != client_list.end(); it++)
+		{
+			if (it->xid <= xid) 
+			{
+			   free(it->buf);
+		       it = client_list.erase(it);
+		       
+		       it--;	   
+			}
+		}
+    }
+    else
+	{
+		// Create new list for client
+		// Add reply to the new list
+		std::list<reply_t> new_client_list;
+		reply_t reply_pkt(xid);
+		new_client_list.push_back(reply_pkt);
+
+		// Add new list to the map
+		reply_window_[clt_nonce] = new_client_list;
+
+		result = NEW;
+    }
+
+	return result;
 }
 
 // rpcs::dispatch calls add_reply when it is sending a reply to an RPC,
@@ -676,7 +737,39 @@ rpcs::add_reply(unsigned int clt_nonce, unsigned int xid,
 		char *b, int sz)
 {
 	ScopedLock rwl(&reply_window_m_);
-        // You fill this in for Lab 1.
+
+	// See if client entry resides in map
+    if (reply_window_.count(clt_nonce) > 0)
+    {
+		bool found = false;
+        std::list<reply_t>::iterator it;
+		
+		std::list<reply_t> client_list = reply_window_.find(clt_nonce)->second;
+
+		// See if xid is present in the list and set return values
+        for (it = client_list.begin(); it != client_list.end(); it++)
+		{
+			if (it->xid == xid) 
+			{ 
+				found          = true;
+                it->buf        = b;
+				it->sz         = sz;
+				it->cb_present = true;
+				break;
+			}
+		}
+	
+		if (!found)
+		{
+			// Assert if packet not found
+			VERIFY(0);
+		}	
+    }
+	else
+	{
+		// Assert if packet not found
+		VERIFY(0);
+	}
 }
 
 void
