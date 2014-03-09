@@ -10,20 +10,21 @@
 class rpc_lock {
 
   private:	
-  pthread_mutex_t internal_mutex; 
-  pthread_cond_t  internal_cond;
+  pthread_mutex_t mutex; 
+  pthread_cond_t  cond;
   
-  typedef enum lockstatus { FREE, LOCKED } lockstatus;
+  typedef enum status { FREE, LOCKED } status;
+  status lockstatus;
 
   lock_protocol::lockid_t id;
 
   public:
  
   rpc_lock(lock_protocol::lockid_t lockid);
-  ~rpc_lock() {};
+  ~rpc_lock();
 
-  lock_protocol::status rpc_acquire(); 
-  lock_protocol::status rpc_release(); 
+  lock_protocol::status acquire(); 
+  lock_protocol::status release(); 
 };
 
 #endif 
