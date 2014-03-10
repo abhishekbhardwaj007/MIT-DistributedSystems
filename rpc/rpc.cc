@@ -556,10 +556,7 @@ rpcs::dispatch(djob_t *j)
 			ScopedLock rwl(&reply_window_m_);
 			// if we don't know about this clt_nonce, create a cleanup object
 			if(reply_window_.find(h.clt_nonce) == reply_window_.end()){
-				printf("Dont know about host");
-                if (reply_window_.count(h.clt_nonce) > 0) printf("List already exists\n");
 				VERIFY (reply_window_[h.clt_nonce].size() == 0); // create
-                if (reply_window_.count(h.clt_nonce) > 0) printf("List created for sure\n");
 				jsl_log(JSL_DBG_2,
 						"rpcs::dispatch: new client %u xid %d chan %d, total clients %d\n", 
 						h.clt_nonce, h.xid, c->channo(), (int)reply_window_.size());
@@ -579,7 +576,7 @@ rpcs::dispatch(djob_t *j)
 			}
 		}
 
-		unit_test();
+		// unit_test();
 		stat = checkduplicate_and_update(h.clt_nonce, h.xid,
                                                  h.xid_rep, &b1, &sz1);
 	} else {
@@ -688,6 +685,8 @@ rpcs::unit_test()
 {
 	char* b;
 	int   sz;
+	std::list<reply_t>* client_list;
+	
 	// Clients 1 to 10 each call checkduplicate_and_update
     for (int i = 1; i <= 10; i++)
 	{
@@ -699,9 +698,17 @@ rpcs::unit_test()
 	// Check size of each list
     for (int i = 1; i <= 10; i++)
 	{
-		std::list<reply_t>* client_list = &(reply_window_.find(i)->second);
+		client_list = &(reply_window_.find(i)->second);
 		VERIFY(client_list->size() == 1);
 	}
+
+	// Send next packet from client 1
+	checkduplicate_and_update(1, 2, 1, &b, &sz);
+	client_list = &(reply_window_.find(1)->second);
+	VERIFY(client_list->size() == 1);
+
+    // See if old packet is forgotten
+	VERIFY(checkduplicate_and_update(1, 1, 1, &b, &sz) == FORGOTTEN);
 
 	printf("Unit test passed\n");
 }
@@ -753,16 +760,21 @@ rpcs::checkduplicate_and_update(unsigned int clt_nonce, unsigned int xid,
 		}
 		
 		// Delete all elements in list with xid <= xid_rep
-       for (it = client_list->begin(); it != client_list->end(); it++)
+        it = client_list->begin();
+	    
+	    while (it != client_list->end())
 		{
 			if (it->xid <= xid_rep) 
 			{
 			   free(it->buf);
 		       it = client_list->erase(it);
-		       
-		       it--;	   
 			}
-		} 
+			else
+			{
+				it++;
+			}
+		}	
+		
 
 		// If not found in list and xid is less than
 		// oldest xid in the window then this packet is forgotten
