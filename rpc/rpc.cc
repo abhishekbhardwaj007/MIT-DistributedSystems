@@ -556,7 +556,10 @@ rpcs::dispatch(djob_t *j)
 			ScopedLock rwl(&reply_window_m_);
 			// if we don't know about this clt_nonce, create a cleanup object
 			if(reply_window_.find(h.clt_nonce) == reply_window_.end()){
+				printf("Dont know about host");
+                if (reply_window_.count(h.clt_nonce) > 0) printf("List already exists\n");
 				VERIFY (reply_window_[h.clt_nonce].size() == 0); // create
+                if (reply_window_.count(h.clt_nonce) > 0) printf("List created for sure\n");
 				jsl_log(JSL_DBG_2,
 						"rpcs::dispatch: new client %u xid %d chan %d, total clients %d\n", 
 						h.clt_nonce, h.xid, c->channo(), (int)reply_window_.size());
@@ -576,16 +579,13 @@ rpcs::dispatch(djob_t *j)
 			}
 		}
 
+		unit_test();
 		stat = checkduplicate_and_update(h.clt_nonce, h.xid,
                                                  h.xid_rep, &b1, &sz1);
 	} else {
 		// this client does not require at most once logic
 		stat = NEW;
 	}
-
-	printf("Printing window after checkdup\n");
-
-	print_client_window(h.clt_nonce);
 
 	switch (stat){
 		case NEW: // new request
@@ -644,6 +644,7 @@ rpcs::dispatch(djob_t *j)
 			c->send(rep.cstr(),rep.size());
 			break;
 	}
+
 	c->decref();
 }
 
@@ -680,6 +681,32 @@ rpcs::print_client_window(unsigned int clt_nonce)
 }
 
 
+
+// Unit test
+void 
+rpcs::unit_test()
+{
+	char* b;
+	int   sz;
+	// Clients 1 to 10 each call checkduplicate_and_update
+    for (int i = 1; i <= 10; i++)
+	{
+		std::list<reply_t> new_list;
+		reply_window_[i] = new_list;
+		checkduplicate_and_update(i, 1, 0, &b, &sz);
+	}
+
+	// Check size of each list
+    for (int i = 1; i <= 10; i++)
+	{
+		std::list<reply_t>* client_list = &(reply_window_.find(i)->second);
+		VERIFY(client_list->size() == 1);
+	}
+
+	printf("Unit test passed\n");
+}
+
+
 // rpcs::dispatch calls this when an RPC request arrives.
 //
 // checks to see if an RPC with xid from clt_nonce has already been received.
@@ -700,8 +727,6 @@ rpcs::checkduplicate_and_update(unsigned int clt_nonce, unsigned int xid,
 {
 	rpcstate_t result = NEW;
 
-    print_client_window(clt_nonce);
-
 	ScopedLock rwl(&reply_window_m_);
 
     printf("Incoming Packet - clt_nonce: %u, xid: %u, xid_rep: %u\n", clt_nonce, xid, xid_rep);
@@ -714,69 +739,53 @@ rpcs::checkduplicate_and_update(unsigned int clt_nonce, unsigned int xid,
         std::list<reply_t>::iterator it;
 		
 		std::list<reply_t>* client_list = &(reply_window_.find(clt_nonce)->second);
-
-		printf("Found client list\n");
 	
-		// Delete all elements in list with xid <= xid_rep
-        for (it = client_list->begin(); it != client_list->end(); it++)
-		{
-			if (it->xid <= xid) 
-			{
-			   printf("Deleting item\n");
-			   free(it->buf);
-		       it = client_list->erase(it);
-		       
-		       it--;	   
-			}
-		}	
 	
 		// See if xid is present in the list
         for (it = client_list->begin(); it != client_list->end(); it++)
 		{
 			if (it->xid == xid) 
 			{ 
-		        printf("Found packet\n");
 				found = true;
                 result = it->cb_present == true ? DONE : INPROGRESS;
 				break;
 			}
 		}
+		
+		// Delete all elements in list with xid <= xid_rep
+       for (it = client_list->begin(); it != client_list->end(); it++)
+		{
+			if (it->xid <= xid_rep) 
+			{
+			   free(it->buf);
+		       it = client_list->erase(it);
+		       
+		       it--;	   
+			}
+		} 
 
 		// If not found in list and xid is less than
 		// oldest xid in the window then this packet is forgotten
 		if ((!found) && (client_list->size()) && (client_list->begin()->xid > xid))
 		{
-		    printf("Forgotten\n");
 			result = FORGOTTEN;
 		}
 		else if (!found)
 		{
 		    // Else Add reply to end of the list	
-		    printf("New\n");
 			reply_t reply_pkt(xid);
 			client_list->push_back(reply_pkt);
-		    printf("Size of list = %lu\n", client_list->size());
-		    client_list = &(reply_window_.find(clt_nonce)->second);
-		    printf("Confirmed Size of list = %lu\n", client_list->size());
 			result = NEW;
 		}
 		
     }
     else
 	{
-		// Create new list for client
-		// Add reply to the new list
-		printf("Add new list\n");
-		std::list<reply_t> new_client_list;
-		reply_t reply_pkt(xid);
-		new_client_list.push_back(reply_pkt);
-
-		// Add new list to the map
-		reply_window_[clt_nonce] = new_client_list;
-
-		result = NEW;
+		// A list should always be present for every client
+		// when this function is called
+		VERIFY(0);
     }
-
+	
 	return result;
 }
 
@@ -789,7 +798,6 @@ void
 rpcs::add_reply(unsigned int clt_nonce, unsigned int xid,
 		char *b, int sz)
 {
-	print_client_window(clt_nonce);
 	ScopedLock rwl(&reply_window_m_);
 
 	// See if client entry resides in map
@@ -798,10 +806,10 @@ rpcs::add_reply(unsigned int clt_nonce, unsigned int xid,
 		bool found = false;
         std::list<reply_t>::iterator it;
 		
-		std::list<reply_t> client_list = reply_window_.find(clt_nonce)->second;
+		std::list<reply_t>* client_list = &(reply_window_.find(clt_nonce)->second);
 
 		// See if xid is present in the list and set return values
-        for (it = client_list.begin(); it != client_list.end(); it++)
+        for (it = client_list->begin(); it != client_list->end(); it++)
 		{
 			if (it->xid == xid) 
 			{ 
@@ -816,12 +824,7 @@ rpcs::add_reply(unsigned int clt_nonce, unsigned int xid,
 		if (!found)
 		{
 			// Assert if packet not found
-			// VERIFY(0);
-			reply_t reply_pkt(xid);
-			reply_pkt.cb_present = true;
-			reply_pkt.buf = b;
-			reply_pkt.sz = sz;
-			client_list.push_back(reply_pkt); 
+			VERIFY(0);
 		}	
     }
 	else

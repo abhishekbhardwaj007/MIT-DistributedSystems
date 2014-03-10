@@ -303,6 +303,7 @@ class rpcs : public chanmgr {
 	void add_reply(unsigned int clt_nonce, unsigned int xid, char *b, int sz);
 
     void print_client_window(unsigned int clt_nonce);
+    void unit_test();
 	rpcstate_t checkduplicate_and_update(unsigned int clt_nonce, 
 			unsigned int xid, unsigned int rep_xid,
 			char **b, int *sz);
