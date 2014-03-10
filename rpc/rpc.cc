@@ -410,7 +410,7 @@ compress:
 
 
 rpcs::rpcs(unsigned int p1, int count)
-  : port_(p1), counting_(count), curr_counts_(count), lossytest_(0), reachable_ (true)
+  : port_(p1), counting_(count), curr_counts_(count), lossytest_(0), reachable_(true)
 {
 	VERIFY(pthread_mutex_init(&procs_m_, 0) == 0);
 	VERIFY(pthread_mutex_init(&count_m_, 0) == 0);
@@ -557,6 +557,11 @@ rpcs::dispatch(djob_t *j)
 			// if we don't know about this clt_nonce, create a cleanup object
 			if(reply_window_.find(h.clt_nonce) == reply_window_.end()){
 				VERIFY (reply_window_[h.clt_nonce].size() == 0); // create
+				
+				// create client entry for keeping track of xid_rep value for 
+				// detecting FORGOTTEN RPC's
+				prev_xid_rep_map_[h.clt_nonce] = 0;
+
 				jsl_log(JSL_DBG_2,
 						"rpcs::dispatch: new client %u xid %d chan %d, total clients %d\n", 
 						h.clt_nonce, h.xid, c->channo(), (int)reply_window_.size());
@@ -736,7 +741,7 @@ rpcs::checkduplicate_and_update(unsigned int clt_nonce, unsigned int xid,
 
 	ScopedLock rwl(&reply_window_m_);
 
-    printf("Incoming Packet - clt_nonce: %u, xid: %u, xid_rep: %u\n", clt_nonce, xid, xid_rep);
+    printf("Incoming Packet - clt_nonce: %u, xid: %u, xid_rep: %u", clt_nonce, xid, xid_rep);
 
 	// See if client entry resides in map
     if (reply_window_.count(clt_nonce) > 0)
@@ -744,17 +749,31 @@ rpcs::checkduplicate_and_update(unsigned int clt_nonce, unsigned int xid,
 		bool found = false;
      
         std::list<reply_t>::iterator it;
-		
 		std::list<reply_t>* client_list = &(reply_window_.find(clt_nonce)->second);
-	
-	
+
+
 		// See if xid is present in the list
         for (it = client_list->begin(); it != client_list->end(); it++)
 		{
 			if (it->xid == xid) 
 			{ 
 				found = true;
-                result = it->cb_present == true ? DONE : INPROGRESS;
+               
+			    // if flag is true RPC is already done - fill in buffers
+			    // else its still INPROGRESS	
+                if (it->cb_present)
+				{
+					result = DONE;
+					*b  = it->buf;
+					*sz = it->sz;
+					printf(" - DONE\n");
+	            }
+				else
+				{
+					result = INPROGRESS;
+					printf(" - INPROGRESS\n");
+				}				
+				
 				break;
 			}
 		}
@@ -776,20 +795,26 @@ rpcs::checkduplicate_and_update(unsigned int clt_nonce, unsigned int xid,
 		}	
 		
 
+		VERIFY(prev_xid_rep_map_.count(clt_nonce) > 0);
+
 		// If not found in list and xid is less than
 		// oldest xid in the window then this packet is forgotten
-		if ((!found) && (client_list->size()) && (client_list->begin()->xid > xid))
+		if ((!found) && (client_list->size()) && (xid <= prev_xid_rep_map_[clt_nonce]))
 		{
+		    printf(" - FORGOTTEN\n");
 			result = FORGOTTEN;
 		}
 		else if (!found)
 		{
+		    printf(" - NEW\n");
 		    // Else Add reply to end of the list	
 			reply_t reply_pkt(xid);
 			client_list->push_back(reply_pkt);
 			result = NEW;
 		}
-		
+	    
+		// Saving state to compare with next incoming packet	
+	    prev_xid_rep_map_[clt_nonce] = xid_rep;
     }
     else
 	{
