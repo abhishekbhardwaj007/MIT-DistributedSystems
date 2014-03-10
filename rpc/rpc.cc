@@ -651,7 +651,8 @@ rpcs::dispatch(djob_t *j)
 }
 
 
-// Prints the contents of the client's window
+// Prints the contents of the client's reply_window_ 
+// Used for debugging
 void
 rpcs::print_client_window(unsigned int clt_nonce)
 {
@@ -741,8 +742,6 @@ rpcs::checkduplicate_and_update(unsigned int clt_nonce, unsigned int xid,
 
 	ScopedLock rwl(&reply_window_m_);
 
-    printf("Incoming Packet - clt_nonce: %u, xid: %u, xid_rep: %u", clt_nonce, xid, xid_rep);
-
 	// See if client entry resides in map
     if (reply_window_.count(clt_nonce) > 0)
     {
@@ -750,7 +749,6 @@ rpcs::checkduplicate_and_update(unsigned int clt_nonce, unsigned int xid,
      
         std::list<reply_t>::iterator it;
 		std::list<reply_t>* client_list = &(reply_window_.find(clt_nonce)->second);
-
 
 		// See if xid is present in the list
         for (it = client_list->begin(); it != client_list->end(); it++)
@@ -766,12 +764,10 @@ rpcs::checkduplicate_and_update(unsigned int clt_nonce, unsigned int xid,
 					result = DONE;
 					*b  = it->buf;
 					*sz = it->sz;
-					printf(" - DONE\n");
 	            }
 				else
 				{
 					result = INPROGRESS;
-					printf(" - INPROGRESS\n");
 				}				
 				
 				break;
@@ -801,12 +797,10 @@ rpcs::checkduplicate_and_update(unsigned int clt_nonce, unsigned int xid,
 		// oldest xid in the window then this packet is forgotten
 		if ((!found) && (client_list->size()) && (xid <= prev_xid_rep_map_[clt_nonce]))
 		{
-		    printf(" - FORGOTTEN\n");
 			result = FORGOTTEN;
 		}
 		else if (!found)
 		{
-		    printf(" - NEW\n");
 		    // Else Add reply to end of the list	
 			reply_t reply_pkt(xid);
 			client_list->push_back(reply_pkt);
